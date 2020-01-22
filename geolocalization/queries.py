@@ -178,11 +178,12 @@ def _parse_search_key_info(search_key):
 
         (dict): A dict containing the indicator's metadata.
     """
-    info = search_key.split(' ')
+    info = search_key.replace('ann %', 'ann%')
+    info = info.split(' ')
     parsed_data = {
-        'source_name': info[1],
-        'indicator_name' : info[2],
-        'uom': info[3],
+        'source_name': info[-4],
+        'indicator_name' : info[-3],
+        'uom': info[-2],
     }
     
     return parsed_data
