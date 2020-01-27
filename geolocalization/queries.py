@@ -19,7 +19,7 @@ import pandas as pd
 
 def search_by_distance(location, distance, distance_type, 
                        include_indicators_with_assets=True, folder_name='Any',
-                       indicator=None):
+                       indicator=None, all_levels=False, parse_to_pandas=False):
     """
 
     General high level function that searches the indicators inside a radius of 
@@ -35,6 +35,12 @@ def search_by_distance(location, distance, distance_type,
         an associated asset. If False only retrieve the ones without.
         folder_name(str): One of the available folder_names to look onto. Can be either:
                           'Any', 'Retail', 'Residential', 'Country Specific' or 'Office'.
+        inficator(str): If different from None it will only search for the specific 
+                        inficator.
+        all_levels(bool): If True it will also retrieve the parent levels (state and 
+                          country specific indicators).
+        parse_to_pandas(bool): If True it will change the JSON structure so it can be
+                               converted easily to a pandas DataFrame.
     
     Returns:
 
@@ -44,12 +50,16 @@ def search_by_distance(location, distance, distance_type,
     if distance_type.lower() not in ['km', 'miles']:
         raise Exception('Invalid distance type. Please use either \'km\' or \'miles\'')
     
-    settings = _retrieve_query_settings(simple=False)
+    settings = _retrieve_query_settings(simple=False, level=all_levels)
 
     results = _search_by_distance(**settings, location=location, distance=distance, 
                                   distance_type=distance_type, folder_name=folder_name,
                                   include_indicators_with_assets=include_indicators_with_assets,
-                                  indicator=indicator)
+                                  indicator=indicator, all_levels=all_levels)
+    if parse_to_pandas:
+
+        results = it_parse_inner_lists(results, ['date', 'actual_value'], 'responses', 'all')
+
     return results
 
 def indicators_given_asset(asset_name):
@@ -178,6 +188,49 @@ def parse_inner_lists(json_data, cols_from_nested, target_nested_column, to_keep
     
     return results
 
+
+
+def it_parse_inner_lists(json_data_list, cols_from_nested, target_nested_column, to_keep_columns):
+    """
+    Iteratively parses JSON data that contains a nested column with a list of dicionaries. 
+    This is inteded to make much easier the conversion to a pandas DataFrame.
+    
+    Args:
+        json_data_list(dict): a list of dictionaries containing one nested value.
+        cols_from_nested(list): a list containing the values to extract from
+                                the nested dictionaries.
+        target_nested_column(str): the name of the value that contains a list
+                                   of dicionaries.
+        to_keep_columns(list or 'all'): either a list containing the name of 
+                                        the unnested columns to keep or the
+                                        string 'all' which means to keep them
+                                        all. If list, do not include the value
+                                        that has the nested values.
+    
+    Returns:
+        
+        A dictionary with the nested value unnested. Ideally to be feed 
+        directly into a Pandas DataFrame.
+    
+    Usage example:
+    
+        parsed = parse_inner_lists(request.json(), ['actual_value', 'date'], 
+                                   'responses', 'all')
+
+        clean = pd.DataFrame(parsed)
+        
+    """
+    
+    results = []
+
+    for element in json_data_list:
+
+        results.extend(parse_inner_lists(element, cols_from_nested, 
+                                         target_nested_column, to_keep_columns))
+    
+    return results
+
+
 def merge_keys(dictionary, key_name):
     """
     Takes the higher level key of a dicionary and uses it
@@ -202,7 +255,7 @@ def merge_keys(dictionary, key_name):
     
     return results
 
-def _retrieve_query_settings(simple=False, add_method=False, ds=False):
+def _retrieve_query_settings(simple=False, add_method=False, ds=False, level=False):
     """
     Internal function to generate the necessary settings to do the query
     calls. 
@@ -228,10 +281,13 @@ def _retrieve_query_settings(simple=False, add_method=False, ds=False):
     
     if simple and not ds:
          path = 'ui_data_simple_query'
-    elif not simple and not ds:
+    elif not simple and not ds and not level:
         path = 'ui_geosearch_query'
     elif ds:
         path = 'datascience/'+ds
+    elif level:
+        print('Using level API')
+        path = 'ui_geosearch_level_query'
    
     port = '5000'
     
@@ -305,7 +361,7 @@ def _parse_search_key_info(search_key):
 
 def _search_by_distance(url, port, path, location, distance, distance_type, 
                         include_indicators_with_assets, folder_name,
-                        indicator=False):
+                        indicator=False, all_levels=False):
     """
 
     Internal function that calls the API for the geolocalization search.
@@ -330,14 +386,15 @@ def _search_by_distance(url, port, path, location, distance, distance_type,
         (dict): A dictionary with the requested data.
     """
     
-    results = {}
+    results = []
     
     data = {
         'location_name': location,
         'distance': distance,
         'distance_type': distance_type.lower(),
         'folder_name':folder_name,
-        'include_indicators_with_assets': include_indicators_with_assets
+        'include_indicators_with_assets': include_indicators_with_assets,
+        'return_all_levels': all_levels
     }
     
     if indicator:
@@ -355,10 +412,11 @@ def _search_by_distance(url, port, path, location, distance, distance_type,
     for result in request.json()['responses'][folder_name]:
                 
         sk = result['search_key']
-        sk_parsed = _parse_search_key_info(sk)
+        #sk_parsed = _parse_search_key_info(sk)
         settings = _retrieve_query_settings(simple=True, add_method=False)
         result2 = _match_key_to_actual(**settings, sk=sk)
-        results[sk] = sk_parsed
-        results[sk]['responses'] = result2['responses'] 
+        #results[sk] = sk_parsed
+        result2['sk'] = sk
+        results.append(result2)
     
     return results
